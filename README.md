@@ -9,7 +9,7 @@ A child-friendly world map: a spinning 3D globe with satellite photos, road name
 ## Setup (once)
 
 1. **Key:** open `config.js` and paste your MapTiler key (https://cloud.maptiler.com/account/keys/).
-2. **GitHub:** create a public repository named `verdenskart`, then *Add file → Upload files* and drag in everything from this folder (keep the `data` and `icons` folders).
+2. **GitHub:** create a public repository named `verdenskart`, then *Add file → Upload files* and drag in everything from this folder (keep the - and `icons` folders).
 3. **Pages:** in the repo, *Settings → Pages → Source: Deploy from a branch → main / (root) → Save*. After a minute the map is at `https://YOURNAME.github.io/verdenskart/`.
 4. **Lock the key:** in MapTiler, open the key and under *Allowed HTTP origins* add `YOURNAME.github.io`. Then nobody else can use it.
 5. **iPad:** open the link in Safari → Share → *Add to Home Screen*.

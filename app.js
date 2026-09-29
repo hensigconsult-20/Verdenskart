@@ -5,6 +5,8 @@
   "use strict";
 
   const KEY = (window.MAPTILER_KEY || "").trim();
+  const COUNTRY_NAMES = window.COUNTRY_NAMES || {};
+  const CAPITALS = window.CAPITALS || {};
   const FLAG_URL = "https://cdn.jsdelivr.net/npm/flag-icons@7/flags/4x3/";
   const BORDERS_URL = "https://cdn.jsdelivr.net/npm/world-atlas@2/countries-50m.json";
   const RTL_URL = "https://cdn.jsdelivr.net/npm/@mapbox/mapbox-gl-rtl-text@0.3.0/dist/mapbox-gl-rtl-text.js";
@@ -19,7 +21,7 @@
   }
   if (!window.maplibregl) { showMessage("Kunne ikke laste kartet. Sjekk internett og prøv igjen."); return; }
 
-  try { maplibregl.setRTLTextPlugin(RTL_URL, true); } catch (e) { /* ikke kritisk */ }
+  try { Promise.resolve(maplibregl.setRTLTextPlugin(RTL_URL, true)).catch(() => {}); } catch (e) { /* ikke kritisk */ }
 
   // ---------- Kartet ----------
   const map = new maplibregl.Map({
@@ -31,6 +33,7 @@
     localIdeographFontFamily: "'Hiragino Sans','PingFang SC','Apple SD Gothic Neo','Noto Sans CJK',sans-serif",
     fadeDuration: 150,
   });
+  window.verdenskart = map; // for feilsøking
 
   map.on("error", (e) => {
     const status = e && e.error && e.error.status;
@@ -67,7 +70,8 @@
         map.setLayoutProperty(layer.id, "visibility", "none");
         continue;
       }
-      if (sl === "place" && JSON.stringify(layer.filter || "").includes("country")) {
+      const f = JSON.stringify(layer.filter || "");
+      if (sl === "place" && (/"(in|==)","class","country"/.test(f) || /^country label/i.test(layer.id))) {
         map.setLayoutProperty(layer.id, "visibility", "none");
         continue;
       }
@@ -180,7 +184,7 @@
     const fc = topojson.feature(topo, topo.objects.countries);
     const labels = [];
     for (const f of fc.features) {
-      const info = window.COUNTRY_NAMES[f.id] || window.COUNTRY_NAMES[f.properties && f.properties.name];
+      const info = COUNTRY_NAMES[f.id] || COUNTRY_NAMES[f.properties && f.properties.name];
       if (!info || !f.geometry) continue;
       const [code, nb, local] = info;
       if (code === "AQ") continue;
@@ -214,7 +218,7 @@
   let countryLabels = null;
   const capitalsData = {
     type: "FeatureCollection",
-    features: Object.entries(window.CAPITALS).map(([code, [name, lat, lon]]) => ({
+    features: Object.entries(CAPITALS).map(([code, [name, lat, lon]]) => ({
       type: "Feature", properties: { code, name, img: "cap-" + code }, geometry: { type: "Point", coordinates: [lon, lat] },
     })),
   };
@@ -266,7 +270,7 @@
       const f = countryLabels && countryLabels.features.find((x) => x.properties.img === id);
       if (f) addTextImage(id, f.properties.nb, f.properties.local, "#ffffff");
     } else if (id.startsWith("cap-")) {
-      const c = window.CAPITALS[id.slice(4)];
+      const c = CAPITALS[id.slice(4)];
       if (c) addTextImage(id, "⭐ " + c[0], "", "#ffe27a");
     }
   });
