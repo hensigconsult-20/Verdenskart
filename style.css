@@ -1,3 +1,4 @@
+[hidden] { display: none !important; }
 html, body { margin: 0; height: 100%; overflow: hidden; background: #050816; }
 body {
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
