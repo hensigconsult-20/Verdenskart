@@ -82,7 +82,7 @@
   }
 
   // ---------- Dag og natt ----------
-  const NIGHT_STEPS = [2, 0, -2, -4, -6, -9, -12, -18]; // solhøyde i grader → mykt skumringsbelte
+  const NIGHT_STEPS = [1, -3, -7, -12, -18]; // solhøyde i grader → mykt skumringsbelte
   const rad = Math.PI / 180, deg = 180 / Math.PI;
 
   function sunPosition(date) {
@@ -148,7 +148,7 @@
         id: "night-" + i, type: "fill", source: "night",
         filter: ["==", ["get", "h"], h],
         layout: { visibility: nightOn ? "visible" : "none" },
-        paint: { "fill-color": "#000820", "fill-opacity": 0.085, "fill-antialias": false },
+        paint: { "fill-color": "#000820", "fill-opacity": 0.13, "fill-antialias": false },
       }, firstSymbolId);
     });
   }
@@ -308,7 +308,7 @@
       map.addSource("flags", { type: "raster", tiles: ["flags://{z}/{x}/{y}"], tileSize: 256, maxzoom: 14 });
       map.addLayer({
         id: "flags", type: "raster", source: "flags",
-        paint: { "raster-opacity": 0.88, "raster-fade-duration": 200 },
+        paint: { "raster-opacity": ["interpolate", ["linear"], ["zoom"], 2, 0.85, 6, 0.95], "raster-fade-duration": 0 },
       }, map.getLayer("night-0") ? "night-0" : firstSymbolId);
     }
     const vis = flagsOn ? "visible" : "none";
@@ -329,8 +329,12 @@
         const tag = text.match(/<svg\b[^>]*>/)[0];
         const vb = (tag.match(/viewBox="([^"]+)"/) || [, "0 0 640 480"])[1].trim().split(/[\s,]+/).map(Number);
         const cleanTag = tag.replace(/\s(width|height|viewBox|preserveAspectRatio)="[^"]*"/g, "");
-        const flag = { text, tag, cleanTag, vb, small: null };
-        flag.small = await svgToImage(flag, vb, 320, 240);
+        const flag = { text, tag, cleanTag, vb, small: null, full: null };
+        flag.full = await svgToImage(flag, vb, 640, 480);
+        const sm = document.createElement("canvas");
+        sm.width = 320; sm.height = 240;
+        sm.getContext("2d").drawImage(flag.full, 0, 0, 320, 240);
+        flag.small = sm;
         return flag;
       })());
     }
@@ -351,10 +355,15 @@
   }
 
   const TILE = 512;
-  let emptyTile = null;
-  const canvasToBuffer = (c) => new Promise((resolve) => c.toBlob((b) => b.arrayBuffer().then(resolve), "image/png"));
+  const blankTile = () => createImageBitmap(new ImageData(1, 1));
+  const nextFrame = () => new Promise((r) => setTimeout(r, 0));
 
-  maplibregl.addProtocol("flags", async (params) => {
+  // Én flis om gangen, så kartet ikke hakker mens flaggene tegnes
+  let queue = Promise.resolve();
+  const inQueue = (job) => { const p = queue.then(job, job); queue = p.catch(() => {}); return p; };
+
+  maplibregl.addProtocol("flags", (params, abort) => inQueue(async () => {
+    if (abort && abort.signal.aborted) throw new Error("avbrutt");
     const [z, x, y] = params.url.replace("flags://", "").split("/").map(Number);
     const n = 2 ** z, scale = n * TILE, ox = x / n, oy = y / n, size = 1 / n;
     const hits = [];
@@ -365,14 +374,12 @@
         hits.push({ code: c.code, g });
       }
     }
-    if (!hits.length) {
-      if (!emptyTile) { const c = document.createElement("canvas"); c.width = c.height = 1; emptyTile = await canvasToBuffer(c); }
-      return { data: emptyTile.slice(0) };
-    }
+    if (!hits.length) return { data: await blankTile() };
+    const flags = await Promise.all(hits.map((h) => getFlag(h.code).catch(() => null)));
+    if (abort && abort.signal.aborted) throw new Error("avbrutt");
     const canvas = document.createElement("canvas");
     canvas.width = canvas.height = TILE;
     const ctx = canvas.getContext("2d");
-    const flags = await Promise.all(hits.map((h) => getFlag(h.code).catch(() => null)));
     const tx = (mx) => (mx - ox) * scale, ty = (my) => (my - oy) * scale;
 
     for (let i = 0; i < hits.length; i++) {
@@ -384,10 +391,12 @@
       ctx.clip(path, "evenodd");
       if (!flag) {
         ctx.fillStyle = "#e8e8e8"; ctx.fillRect(0, 0, TILE, TILE);
-      } else if (fw <= 480) {
-        ctx.drawImage(flag.small, fx, fy, fw, fh);
+      } else if (fw <= 320) {
+        ctx.drawImage(flag.small, fx, fy, fw, fh);          // langt ute: ferdig lite bilde (raskt)
+      } else if (fw <= 20000) {
+        ctx.drawImage(flag.full, fx, fy, fw, fh);           // vektor: skarpt uansett zoom
       } else {
-        // Zoomet inn: tegn akkurat den biten av flagget som vises, i full skarphet
+        // Veldig langt inne: tegn bare biten av flagget som vises
         const ix0 = Math.max(0, fx), iy0 = Math.max(0, fy);
         const ix1 = Math.min(TILE, fx + fw), iy1 = Math.min(TILE, fy + fh);
         if (ix1 > ix0 && iy1 > iy0) {
@@ -396,15 +405,17 @@
           try {
             const img = await svgToImage(flag, box, Math.ceil(ix1 - ix0), Math.ceil(iy1 - iy0));
             ctx.drawImage(img, ix0, iy0, ix1 - ix0, iy1 - iy0);
-          } catch (e) { ctx.drawImage(flag.small, fx, fy, fw, fh); }
+          } catch (e) { ctx.drawImage(flag.full, fx, fy, fw, fh); }
         }
       }
       ctx.restore();
       ctx.lineWidth = 2; ctx.strokeStyle = "rgba(255,255,255,0.8)"; ctx.lineJoin = "round";
       ctx.stroke(path);
     }
-    return { data: await canvasToBuffer(canvas) };
-  });
+    const bitmap = await createImageBitmap(canvas); // ingen PNG-omkoding → mye raskere
+    await nextFrame();
+    return { data: bitmap };
+  }));
 
   function addRing(path, r, tx, ty) {
     let lx = tx(r[0]), ly = ty(r[1]);
@@ -412,7 +423,7 @@
     const last = r.length - 2;
     for (let i = 2; i < r.length; i += 2) {
       const X = tx(r[i]), Y = ty(r[i + 1]);
-      if (i !== last && Math.abs(X - lx) < 0.7 && Math.abs(Y - ly) < 0.7) continue;
+      if (i !== last && Math.abs(X - lx) < 1 && Math.abs(Y - ly) < 1) continue;
       path.lineTo(X, Y); lx = X; ly = Y;
     }
     path.closePath();
